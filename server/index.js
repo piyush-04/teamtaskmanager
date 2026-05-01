@@ -14,6 +14,8 @@ import { errorHandler, notFound } from "./middleware/errors.js";
 const app = express();
 const port = process.env.PORT || 5000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let dbReady = false;
+let dbInitError = null;
 
 app.use(
   helmet({
@@ -32,7 +34,10 @@ app.use(
 app.use(express.json());
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    database: dbReady ? "ready" : dbInitError ? "error" : "initializing",
+  });
 });
 
 app.use("/api/auth", authRoutes);
@@ -51,8 +56,16 @@ app.get(/.*/, (req, res, next) => {
 app.use(notFound);
 app.use(errorHandler);
 
-await initDb();
-
-app.listen(port, () => {
+app.listen(port, "0.0.0.0", () => {
   console.log(`Team Task Manager running on port ${port}`);
 });
+
+initDb()
+  .then(() => {
+    dbReady = true;
+    console.log("Database initialized");
+  })
+  .catch((error) => {
+    dbInitError = error.message;
+    console.error("Database initialization failed:", error);
+  });

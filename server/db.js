@@ -8,27 +8,35 @@ const connectionString =
   process.env.POSTGRES_URL ||
   process.env.POSTGRES_PRIVATE_URL;
 
-if (!connectionString) {
-  throw new Error(
-    "A PostgreSQL connection URL is required. Set DATABASE_URL or DATABASE_PRIVATE_URL.",
-  );
+let pool;
+
+function getPool() {
+  if (!connectionString) {
+    throw new Error(
+      "A PostgreSQL connection URL is required. Set DATABASE_URL or DATABASE_PRIVATE_URL.",
+    );
+  }
+
+  if (!pool) {
+    pool = new Pool({
+      connectionString,
+      ssl:
+        process.env.NODE_ENV === "production"
+          ? { rejectUnauthorized: false }
+          : undefined,
+    });
+  }
+
+  return pool;
 }
 
-export const pool = new Pool({
-  connectionString,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : undefined,
-});
-
 export async function query(text, params = []) {
-  const result = await pool.query(text, params);
+  const result = await getPool().query(text, params);
   return result;
 }
 
 export async function transaction(callback) {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     const result = await callback(client);
