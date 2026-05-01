@@ -2,10 +2,16 @@ import pg from "pg";
 
 const { Pool } = pg;
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString =
+  process.env.DATABASE_URL ||
+  process.env.DATABASE_PRIVATE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRIVATE_URL;
 
 if (!connectionString) {
-  throw new Error("DATABASE_URL is required");
+  throw new Error(
+    "A PostgreSQL connection URL is required. Set DATABASE_URL or DATABASE_PRIVATE_URL.",
+  );
 }
 
 export const pool = new Pool({
