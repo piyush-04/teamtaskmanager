@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -76,10 +77,11 @@ router.post("/", async (req, res, next) => {
 
     const { rows } = await query(
       `INSERT INTO tasks
-        (project_id, title, description, due_date, priority, assigned_to, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (id, project_id, title, description, due_date, priority, assigned_to, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
+        randomUUID(),
         req.params.projectId,
         body.title,
         body.description,

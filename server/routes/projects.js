@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { query, transaction } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -42,10 +43,10 @@ router.post("/", async (req, res, next) => {
     const body = projectSchema.parse(req.body);
     const project = await transaction(async (client) => {
       const { rows } = await client.query(
-        `INSERT INTO projects (name, description, created_by)
-         VALUES ($1, $2, $3)
+        `INSERT INTO projects (id, name, description, created_by)
+         VALUES ($1, $2, $3, $4)
          RETURNING *`,
-        [body.name, body.description, req.user.id],
+        [randomUUID(), body.name, body.description, req.user.id],
       );
       await client.query(
         `INSERT INTO project_members (project_id, user_id, role)

@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { query } from "../db.js";
+import { getJwtSecret } from "../utils/jwt.js";
 
 export async function requireAuth(req, res, next) {
   try {
@@ -10,7 +11,7 @@ export async function requireAuth(req, res, next) {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, getJwtSecret());
     const { rows } = await query(
       "SELECT id, name, email, created_at FROM users WHERE id = $1",
       [payload.userId],

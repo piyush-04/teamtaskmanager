@@ -1,9 +1,11 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { getJwtSecret } from "../utils/jwt.js";
 
 const router = Router();
 
@@ -17,7 +19,7 @@ const signupSchema = authSchema.extend({
 });
 
 function issueToken(userId) {
-  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+  return jwt.sign({ userId }, getJwtSecret(), { expiresIn: "7d" });
 }
 
 router.post("/signup", async (req, res, next) => {
@@ -25,10 +27,10 @@ router.post("/signup", async (req, res, next) => {
     const body = signupSchema.parse(req.body);
     const passwordHash = await bcrypt.hash(body.password, 12);
     const { rows } = await query(
-      `INSERT INTO users (name, email, password_hash)
-       VALUES ($1, $2, $3)
+      `INSERT INTO users (id, name, email, password_hash)
+       VALUES ($1, $2, $3, $4)
        RETURNING id, name, email, created_at`,
-      [body.name, body.email, passwordHash],
+      [randomUUID(), body.name, body.email, passwordHash],
     );
 
     res.status(201).json({ user: rows[0], token: issueToken(rows[0].id) });

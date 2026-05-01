@@ -30,7 +30,8 @@ function getPool() {
     pool = new Pool({
       connectionString,
       ssl:
-        process.env.NODE_ENV === "production"
+        process.env.PGSSLMODE === "require" ||
+        connectionString.includes("sslmode=require")
           ? { rejectUnauthorized: false }
           : undefined,
     });
@@ -61,10 +62,8 @@ export async function transaction(callback) {
 
 export async function initDb() {
   await query(`
-    CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
     CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id UUID PRIMARY KEY,
       name TEXT NOT NULL CHECK (char_length(trim(name)) >= 2),
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
@@ -72,7 +71,7 @@ export async function initDb() {
     );
 
     CREATE TABLE IF NOT EXISTS projects (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id UUID PRIMARY KEY,
       name TEXT NOT NULL CHECK (char_length(trim(name)) >= 2),
       description TEXT NOT NULL DEFAULT '',
       created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -88,7 +87,7 @@ export async function initDb() {
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id UUID PRIMARY KEY,
       project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       title TEXT NOT NULL CHECK (char_length(trim(title)) >= 2),
       description TEXT NOT NULL DEFAULT '',
