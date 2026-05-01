@@ -1,6 +1,27 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updateProfile,
+} from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  deleteField,
+  doc,
+  getDoc,
+  getDocs,
+  query as firestoreQuery,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+import {
   BarChart3,
   CheckCircle2,
   ClipboardList,
@@ -10,6 +31,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import { db, firebaseAuth } from "./firebase";
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
@@ -33,28 +55,80 @@ function apiRequest(path, options = {}, token) {
 }
 
 function useAuth() {
-  const [auth, setAuth] = useState(() => {
-    const token = localStorage.getItem("ttm_token");
-    const user = localStorage.getItem("ttm_user");
-    return token && user ? { token, user: JSON.parse(user) } : null;
-  });
+  const [auth, setAuth] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const saveAuth = (data) => {
-    localStorage.setItem("ttm_token", data.token);
-    localStorage.setItem("ttm_user", JSON.stringify(data.user));
-    setAuth(data);
+  async function loadUser(firebaseUser) {
+    const userRef = doc(db, "users", firebaseUser.uid);
+    const snapshot = await getDoc(userRef);
+    const user = snapshot.exists()
+      ? { id: firebaseUser.uid, ...snapshot.data() }
+      : {
+          id: firebaseUser.uid,
+          name: firebaseUser.displayName || firebaseUser.email.split("@")[0],
+          email: firebaseUser.email.toLowerCase(),
+        };
+
+    if (!snapshot.exists()) {
+      await setDoc(userRef, {
+        name: user.name,
+        email: user.email,
+        created_at: serverTimestamp(),
+      });
+    }
+
+    setAuth({ user });
+  }
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (firebaseUser) => {
+      try {
+        if (firebaseUser) {
+          await loadUser(firebaseUser);
+        } else {
+          setAuth(null);
+        }
+      } catch (error) {
+        console.error(error);
+        setAuth(null);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  const login = async ({ email, password }) => {
+    await signInWithEmailAndPassword(firebaseAuth, email, password);
   };
 
-  const logout = () => {
-    localStorage.removeItem("ttm_token");
-    localStorage.removeItem("ttm_user");
+  const signup = async ({ name, email, password }) => {
+    const credential = await createUserWithEmailAndPassword(
+      firebaseAuth,
+      email,
+      password,
+    );
+    await updateProfile(credential.user, { displayName: name });
+    await setDoc(doc(db, "users", credential.user.uid), {
+      name,
+      email: email.toLowerCase(),
+      created_at: serverTimestamp(),
+    });
+    setAuth({
+      user: { id: credential.user.uid, name, email: email.toLowerCase() },
+    });
+  };
+
+  const logout = async () => {
+    await firebaseSignOut(firebaseAuth);
     setAuth(null);
   };
 
-  return { auth, saveAuth, logout };
+  return { auth, loading, login, signup, logout };
 }
 
-function AuthScreen({ onAuth }) {
+function AuthScreen({ onLogin, onSignup }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
@@ -65,17 +139,13 @@ function AuthScreen({ onAuth }) {
     setLoading(true);
     setError("");
     try {
-      const payload =
-        mode === "signup"
-          ? form
-          : { email: form.email, password: form.password };
-      const data = await apiRequest(`/auth/${mode}`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      onAuth(data);
+      if (mode === "signup") {
+        await onSignup(form);
+      } else {
+        await onLogin({ email: form.email, password: form.password });
+      }
     } catch (err) {
-      setError(err.message);
+      setError(err.message.replace("Firebase: ", ""));
     } finally {
       setLoading(false);
     }
@@ -204,23 +274,108 @@ function AppShell({ auth, onLogout }) {
   const isAdmin = projectDetail?.project?.role === "Admin";
 
   async function loadProjects() {
-    const data = await apiRequest("/projects", {}, auth.token);
-    setProjects(data.projects);
-    if (!activeProjectId && data.projects[0]) {
-      setActiveProjectId(data.projects[0].id);
+    const snapshot = await getDocs(collection(db, "projects"));
+    const nextProjects = [];
+
+    for (const projectDoc of snapshot.docs) {
+      const project = { id: projectDoc.id, ...projectDoc.data() };
+      const role = project.members?.[auth.user.id];
+      if (!role) continue;
+
+      const taskSnapshot = await getDocs(
+        firestoreQuery(
+          collection(db, "tasks"),
+          where("project_id", "==", projectDoc.id),
+        ),
+      );
+      const tasksForProject = taskSnapshot.docs.map((taskDoc) => taskDoc.data());
+
+      nextProjects.push({
+        ...project,
+        role,
+        task_count: tasksForProject.length,
+        done_count: tasksForProject.filter((task) => task.status === "Done")
+          .length,
+      });
+    }
+
+    setProjects(nextProjects);
+    if (!activeProjectId && nextProjects[0]) {
+      setActiveProjectId(nextProjects[0].id);
     }
   }
 
   async function loadWorkspace(projectId = activeProjectId) {
     if (!projectId) return;
-    const [detail, taskData, dash] = await Promise.all([
-      apiRequest(`/projects/${projectId}`, {}, auth.token),
-      apiRequest(`/projects/${projectId}/tasks`, {}, auth.token),
-      apiRequest(`/projects/${projectId}/dashboard`, {}, auth.token),
-    ]);
-    setProjectDetail(detail);
-    setTasks(taskData.tasks);
-    setDashboard(dash);
+    const projectSnapshot = await getDoc(doc(db, "projects", projectId));
+    if (!projectSnapshot.exists()) return;
+
+    const project = { id: projectSnapshot.id, ...projectSnapshot.data() };
+    const role = project.members?.[auth.user.id];
+    if (!role) {
+      setNotice("You do not have access to this project");
+      return;
+    }
+
+    const usersSnapshot = await getDocs(collection(db, "users"));
+    const usersById = Object.fromEntries(
+      usersSnapshot.docs.map((userDoc) => [
+        userDoc.id,
+        { id: userDoc.id, ...userDoc.data() },
+      ]),
+    );
+    const members = Object.entries(project.members || {}).map(([userId, memberRole]) => ({
+      id: userId,
+      name: usersById[userId]?.name || "Unknown user",
+      email: usersById[userId]?.email || "",
+      role: memberRole,
+    }));
+
+    const taskSnapshot = await getDocs(
+      firestoreQuery(collection(db, "tasks"), where("project_id", "==", projectId)),
+    );
+    const allTasks = taskSnapshot.docs.map((taskDoc) => {
+      const task = { id: taskDoc.id, ...taskDoc.data() };
+      return {
+        ...task,
+        assignee_name: task.assigned_to
+          ? usersById[task.assigned_to]?.name || "Unknown user"
+          : null,
+        assignee_email: task.assigned_to
+          ? usersById[task.assigned_to]?.email || ""
+          : null,
+      };
+    });
+    const visibleTasks =
+      role === "Admin"
+        ? allTasks
+        : allTasks.filter((task) => task.assigned_to === auth.user.id);
+
+    const byStatus = statuses.map((status) => ({
+      status,
+      count: allTasks.filter((task) => task.status === status).length,
+    }));
+    const perUser = members.map((member) => ({
+      name: member.name,
+      count: allTasks.filter((task) => task.assigned_to === member.id).length,
+    }));
+    const today = new Date().toISOString().slice(0, 10);
+
+    setProjectDetail({ project: { ...project, role }, members });
+    setTasks(
+      visibleTasks.sort((a, b) => {
+        const statusDiff = statuses.indexOf(a.status) - statuses.indexOf(b.status);
+        return statusDiff || a.due_date.localeCompare(b.due_date);
+      }),
+    );
+    setDashboard({
+      totalTasks: allTasks.length,
+      byStatus,
+      perUser,
+      overdueTasks: allTasks.filter(
+        (task) => task.due_date < today && task.status !== "Done",
+      ).length,
+    });
   }
 
   useEffect(() => {
@@ -233,49 +388,70 @@ function AppShell({ auth, onLogout }) {
 
   async function createProject(event) {
     event.preventDefault();
-    const data = await apiRequest(
-      "/projects",
-      { method: "POST", body: JSON.stringify(projectForm) },
-      auth.token,
-    );
+    const projectRef = await addDoc(collection(db, "projects"), {
+      name: projectForm.name,
+      description: projectForm.description || "",
+      created_by: auth.user.id,
+      members: { [auth.user.id]: "Admin" },
+      created_at: serverTimestamp(),
+    });
     setProjectForm({ name: "", description: "" });
     await loadProjects();
-    setActiveProjectId(data.project.id);
+    setActiveProjectId(projectRef.id);
   }
 
   async function addMember(event) {
     event.preventDefault();
-    await apiRequest(
-      `/projects/${activeProjectId}/members`,
-      { method: "POST", body: JSON.stringify({ email: memberEmail }) },
-      auth.token,
+    const userSnapshot = await getDocs(
+      firestoreQuery(
+        collection(db, "users"),
+        where("email", "==", memberEmail.toLowerCase()),
+      ),
     );
+    if (userSnapshot.empty) {
+      setNotice("No user found with that email");
+      return;
+    }
+    await updateDoc(doc(db, "projects", activeProjectId), {
+      [`members.${userSnapshot.docs[0].id}`]: "Member",
+    });
     setMemberEmail("");
     await loadWorkspace();
   }
 
   async function removeMember(userId) {
-    await apiRequest(
-      `/projects/${activeProjectId}/members/${userId}`,
-      { method: "DELETE" },
-      auth.token,
+    await updateDoc(doc(db, "projects", activeProjectId), {
+      [`members.${userId}`]: deleteField(),
+    });
+    const taskSnapshot = await getDocs(
+      firestoreQuery(
+        collection(db, "tasks"),
+        where("project_id", "==", activeProjectId),
+        where("assigned_to", "==", userId),
+      ),
+    );
+    await Promise.all(
+      taskSnapshot.docs.map((taskDoc) =>
+        updateDoc(doc(db, "tasks", taskDoc.id), { assigned_to: null }),
+      ),
     );
     await loadWorkspace();
   }
 
   async function createTask(event) {
     event.preventDefault();
-    await apiRequest(
-      `/projects/${activeProjectId}/tasks`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          ...taskForm,
-          assigned_to: taskForm.assigned_to || null,
-        }),
-      },
-      auth.token,
-    );
+    await addDoc(collection(db, "tasks"), {
+      project_id: activeProjectId,
+      title: taskForm.title,
+      description: taskForm.description || "",
+      due_date: taskForm.due_date,
+      priority: taskForm.priority,
+      status: "To Do",
+      assigned_to: taskForm.assigned_to || null,
+      created_by: auth.user.id,
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+    });
     setTaskForm({
       title: "",
       description: "",
@@ -288,20 +464,15 @@ function AppShell({ auth, onLogout }) {
   }
 
   async function updateStatus(taskId, status) {
-    await apiRequest(
-      `/projects/${activeProjectId}/tasks/${taskId}/status`,
-      { method: "PATCH", body: JSON.stringify({ status }) },
-      auth.token,
-    );
+    await updateDoc(doc(db, "tasks", taskId), {
+      status,
+      updated_at: serverTimestamp(),
+    });
     await loadWorkspace();
   }
 
   async function deleteTask(taskId) {
-    await apiRequest(
-      `/projects/${activeProjectId}/tasks/${taskId}`,
-      { method: "DELETE" },
-      auth.token,
-    );
+    await deleteDoc(doc(db, "tasks", taskId));
     await loadWorkspace();
     await loadProjects();
   }
@@ -560,11 +731,25 @@ function AppShell({ auth, onLogout }) {
 }
 
 function Root() {
-  const { auth, saveAuth, logout } = useAuth();
+  const { auth, loading, login, signup, logout } = useAuth();
+  if (loading) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div>
+            <p className="eyebrow">Loading workspace</p>
+            <h1>Team Task Manager</h1>
+            <p className="muted">Checking your Firebase session.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return auth ? (
     <AppShell auth={auth} onLogout={logout} />
   ) : (
-    <AuthScreen onAuth={saveAuth} />
+    <AuthScreen onLogin={login} onSignup={signup} />
   );
 }
 
