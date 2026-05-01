@@ -17,5 +17,20 @@ export function errorHandler(error, req, res, next) {
   }
 
   console.error(error);
+
+  if (
+    error.message?.includes("PostgreSQL connection URL is required") ||
+    error.code === "ENOTFOUND" ||
+    error.code === "ECONNREFUSED" ||
+    error.code === "ETIMEDOUT" ||
+    error.code === "28P01" ||
+    error.code === "3D000"
+  ) {
+    return res.status(503).json({
+      message:
+        "Database is not connected. Check the PostgreSQL environment variable in Railway.",
+    });
+  }
+
   return res.status(500).json({ message: "Something went wrong" });
 }

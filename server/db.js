@@ -9,6 +9,15 @@ const connectionString =
   process.env.POSTGRES_PRIVATE_URL;
 
 let pool;
+export const dbEnv = {
+  hasConnectionUrl: Boolean(connectionString),
+  source:
+    (process.env.DATABASE_URL && "DATABASE_URL") ||
+    (process.env.DATABASE_PRIVATE_URL && "DATABASE_PRIVATE_URL") ||
+    (process.env.POSTGRES_URL && "POSTGRES_URL") ||
+    (process.env.POSTGRES_PRIVATE_URL && "POSTGRES_PRIVATE_URL") ||
+    null,
+};
 
 function getPool() {
   if (!connectionString) {

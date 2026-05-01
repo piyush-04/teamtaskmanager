@@ -4,7 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { initDb } from "./db.js";
+import { dbEnv, initDb } from "./db.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
 import taskRoutes from "./routes/tasks.js";
@@ -37,6 +37,9 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     database: dbReady ? "ready" : dbInitError ? "error" : "initializing",
+    databaseEnv: dbEnv.hasConnectionUrl ? dbEnv.source : "missing",
+    databaseError:
+      dbInitError && process.env.NODE_ENV !== "production" ? dbInitError : undefined,
   });
 });
 
