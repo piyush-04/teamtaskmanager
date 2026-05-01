@@ -106,6 +106,29 @@ The backend automatically creates the required tables on startup.
 
 6. After deployment, open `/api/health` to verify the backend and then test the app URL.
 
+## Free Public Deployment on Render
+
+Render supports free web services and free Postgres databases for previews and hobby apps. Note that free Render Postgres databases expire after 30 days.
+
+1. Push this repository to GitHub.
+2. Open [Render Blueprints](https://dashboard.render.com/blueprints).
+3. Click **New Blueprint Instance** and connect `https://github.com/piyush-04/teamtaskmanager`.
+4. Render will read `render.yaml` and create:
+   - `teamtaskmanager` web service
+   - `teamtaskmanager-db` Postgres database
+5. Choose the free plan when prompted and deploy the blueprint.
+6. After deployment, open:
+
+   ```text
+   https://teamtaskmanager.onrender.com/api/health
+   ```
+
+   If the response is `{"ok":true}`, open the root app URL:
+
+   ```text
+   https://teamtaskmanager.onrender.com
+   ```
+
 ## Demo Video Checklist
 
 - Show signup and login
